@@ -82,10 +82,43 @@ fn fmt_host(h: &crate::host_info::HostMetrics) -> String {
     let cpu_label = t("header.cpu");
     let mem_label = t("header.mem");
     let load_label = t("header.load");
-    format!(
+    let mut out = format!(
         "{} {:>2.0}%  {} {:>2.0}%  {} {:.1}",
         cpu_label, h.cpu_pct, mem_label, h.mem_pct, load_label, h.load1
-    )
+    );
+    // Swap, disk and network append only when the host actually reports them.
+    // A machine with no swap, or a first tick with no network delta yet, drops
+    // the field instead of printing a zero that reads as a real measurement.
+    if let Some(swap) = h.swap_pct {
+        out.push_str(&format!("  {} {:>2.0}%", t("header.swap"), swap));
+    }
+    if let Some(disk) = h.disk_pct {
+        out.push_str(&format!("  {} {:>2.0}%", t("header.disk"), disk));
+    }
+    if let (Some(rx), Some(tx)) = (h.net_rx_bps, h.net_tx_bps) {
+        out.push_str(&format!(
+            "  {} {}/{}",
+            t("header.net"),
+            fmt_rate(rx),
+            fmt_rate(tx)
+        ));
+    }
+    out
+}
+
+/// Bytes per second in the shortest unit that keeps it under four characters,
+/// so the header width stays predictable as traffic swings by orders of
+/// magnitude.
+fn fmt_rate(bps: u64) -> String {
+    const K: u64 = 1024;
+    const M: u64 = K * 1024;
+    const G: u64 = M * 1024;
+    match bps {
+        b if b >= G => format!("{:.1}G", b as f64 / G as f64),
+        b if b >= M => format!("{:.1}M", b as f64 / M as f64),
+        b if b >= K => format!("{:.0}K", b as f64 / K as f64),
+        b => format!("{b}B"),
+    }
 }
 
 fn fmt_agent(a: &crate::host_info::AgentAggregate) -> String {

@@ -29,6 +29,10 @@ proc_pidinfo = "0.1"
 [target.'cfg(target_os = "windows")'.dependencies]
 sysinfo = "0.32"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Host vitals (CPU/MEM/load): macOS has no /proc to read.
+sysinfo = "0.32"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 

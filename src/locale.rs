@@ -173,6 +173,9 @@ static LOCALE_EN: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("header.cpu", "CPU");
     m.insert("header.mem", "MEM");
     m.insert("header.load", "L");
+    m.insert("header.swap", "SWP");
+    m.insert("header.disk", "DSK");
+    m.insert("header.net", "NET");
     m.insert("header.agents", "agents");
     m.insert("header.ctx", "ctx");
 
@@ -418,6 +421,9 @@ static LOCALE_ZH: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("header.cpu", "CPU");
     m.insert("header.mem", "内存");
     m.insert("header.load", "负载");
+    m.insert("header.swap", "交换");
+    m.insert("header.disk", "磁盘");
+    m.insert("header.net", "网络");
     m.insert("header.agents", "代理");
     m.insert("header.ctx", "上下文");
 

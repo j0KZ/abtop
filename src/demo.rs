@@ -582,6 +582,10 @@ pub fn populate_demo(app: &mut App) {
         cpu_pct: 23.0,
         mem_pct: 41.0,
         load1: 1.8,
+        swap_pct: Some(4.0),
+        disk_pct: Some(62.0),
+        net_rx_bps: Some(1_400_000),
+        net_tx_bps: Some(210_000),
     });
     app.agent_aggregate = crate::host_info::AgentAggregate::from_sessions(&app.sessions);
 }
