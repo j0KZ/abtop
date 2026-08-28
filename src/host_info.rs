@@ -1,8 +1,8 @@
 //! Lightweight host vitals: CPU%, MEM%, 1-min load average.
 //!
-//! Reads `/proc` directly on Linux and uses `sysinfo` on Windows. Returns
-//! `None` on other platforms (for now); callers should treat absence as
-//! "metrics unavailable" and render a graceful fallback.
+//! Reads `/proc` directly on Linux and uses `sysinfo` on Windows and macOS.
+//! Returns `None` on other platforms (for now); callers should treat absence
+//! as "metrics unavailable" and render a graceful fallback.
 
 use serde::Serialize;
 
@@ -17,18 +17,18 @@ pub struct HostMetrics {
 }
 
 /// Stateful sampler that remembers the previous `/proc/stat` snapshot so it
-/// can compute CPU usage as a delta between ticks. On Windows it instead
-/// holds a `sysinfo::System` across ticks for the same reason: CPU usage is
-/// a delta between two refreshes.
+/// can compute CPU usage as a delta between ticks. On Windows and macOS it
+/// instead holds a `sysinfo::System` across ticks for the same reason: CPU
+/// usage is a delta between two refreshes.
 #[derive(Debug, Default)]
 pub struct HostSampler {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     prev: Option<CpuTimes>,
-    #[cfg(target_os = "windows")]
-    win: windows_impl::WinSampler,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    sys: sysinfo_impl::SysinfoSampler,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[derive(Debug, Clone, Copy)]
 struct CpuTimes {
     /// All non-idle jiffies (user + nice + system + irq + softirq + steal).
@@ -43,8 +43,8 @@ impl HostSampler {
     }
 
     /// Sample current host metrics. Returns `None` if the platform has no
-    /// metrics source (non-Linux unix, for now).
-    #[cfg(not(target_os = "windows"))]
+    /// metrics source (a unix that is neither Linux nor macOS, for now).
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     pub fn sample(&mut self) -> Option<HostMetrics> {
         let cpu_pct = self.sample_cpu()?;
         let mem_pct = sample_mem()?;
@@ -56,14 +56,15 @@ impl HostSampler {
         })
     }
 
-    /// Windows: CPU/MEM via `sysinfo`. There is no load average on Windows,
-    /// so `load1` is reported as 0.0 (callers should label it N/A).
-    #[cfg(target_os = "windows")]
+    /// Windows and macOS: CPU/MEM via `sysinfo`. macOS reports a real 1-min
+    /// load average; Windows has none, so there `load1` stays 0.0 (callers
+    /// should label it N/A).
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub fn sample(&mut self) -> Option<HostMetrics> {
-        self.win.sample()
+        self.sys.sample()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     fn sample_cpu(&mut self) -> Option<f64> {
         let now = read_cpu_times()?;
         let pct = match self.prev {
@@ -144,22 +145,35 @@ fn sample_load() -> Option<f64> {
     s.split_whitespace().next().and_then(|n| n.parse().ok())
 }
 
-#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+#[cfg(all(
+    not(target_os = "linux"),
+    not(target_os = "windows"),
+    not(target_os = "macos")
+))]
 fn read_cpu_times() -> Option<CpuTimes> {
     None
 }
-#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+#[cfg(all(
+    not(target_os = "linux"),
+    not(target_os = "windows"),
+    not(target_os = "macos")
+))]
 fn sample_mem() -> Option<f64> {
     None
 }
-#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+#[cfg(all(
+    not(target_os = "linux"),
+    not(target_os = "windows"),
+    not(target_os = "macos")
+))]
 fn sample_load() -> Option<f64> {
     None
 }
 
-/// Windows host metrics via `sysinfo` (already a Windows-only dependency).
-#[cfg(target_os = "windows")]
-mod windows_impl {
+/// Host metrics via `sysinfo`, on the platforms with no `/proc` to read:
+/// Windows, and macOS where the `/proc`-based path returns nothing.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod sysinfo_impl {
     use super::HostMetrics;
     use sysinfo::System;
 
@@ -167,7 +181,7 @@ mod windows_impl {
     /// delta between two refreshes, so a freshly constructed `System` always
     /// reports 0. The collector tick (~2s) is well above
     /// `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL`.
-    pub struct WinSampler {
+    pub struct SysinfoSampler {
         sys: System,
         /// False until the first refresh has happened; the first sample has
         /// no CPU delta yet, so report 0.0 (mirrors the Linux first-tick
@@ -175,7 +189,7 @@ mod windows_impl {
         primed: bool,
     }
 
-    impl Default for WinSampler {
+    impl Default for SysinfoSampler {
         fn default() -> Self {
             Self {
                 sys: System::new(),
@@ -184,15 +198,15 @@ mod windows_impl {
         }
     }
 
-    impl std::fmt::Debug for WinSampler {
+    impl std::fmt::Debug for SysinfoSampler {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("WinSampler")
+            f.debug_struct("SysinfoSampler")
                 .field("primed", &self.primed)
                 .finish()
         }
     }
 
-    impl WinSampler {
+    impl SysinfoSampler {
         pub fn sample(&mut self) -> Option<HostMetrics> {
             self.sys.refresh_cpu_usage();
             self.sys.refresh_memory();
@@ -210,8 +224,12 @@ mod windows_impl {
             }
             let mem_pct = (self.sys.used_memory() as f64 / total as f64) * 100.0;
 
-            // Windows has no native load average. Keep the wire shape stable
-            // by reporting 0.0 rather than using sysinfo's approximation.
+            // macOS has a real load average. Windows has none, and
+            // `load_average()` is documented as unsupported there, so keep the
+            // wire shape stable by reporting 0.0 instead of an approximation.
+            #[cfg(target_os = "macos")]
+            let load1 = System::load_average().one;
+            #[cfg(target_os = "windows")]
             let load1 = 0.0;
 
             Some(HostMetrics {
